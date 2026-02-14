@@ -43,7 +43,7 @@
       gap:20px;
     }
 
-    /* ✅ Room box light green */
+    /* ✅ Room box light green (NO fade animation to avoid flashing) */
     .room{
       min-width:280px;
       padding:25px;
@@ -51,7 +51,6 @@
       box-shadow:0 6px 18px rgba(0,0,0,.35);
       background:#7CFC98;
       color:#003b1a;
-      animation: fadeIn .35s ease-in-out;
     }
 
     .room-number{
@@ -60,7 +59,6 @@
       font-weight:900;
     }
 
-    /* ✅ Doctor name line */
     .doctor-name{
       font-size:20px;
       font-weight:800;
@@ -94,11 +92,6 @@
       opacity:.9;
       color:#fff;
     }
-
-    @keyframes fadeIn{
-      from{opacity:0; transform:translateY(8px);}
-      to{opacity:1; transform:translateY(0);}
-    }
   </style>
 </head>
 
@@ -127,7 +120,7 @@
     const roomsDiv = document.getElementById("rooms");
 
     // Hide room if not updated recently
-    const MAX_AGE_SECONDS = 900; // 15 minutes
+    const MAX_AGE_SECONDS = 180; // 3 minutes
 
     // Blink duration
     const BLINK_MS = 5000;
@@ -197,6 +190,8 @@
       }
 
       let visible = 0;
+
+      // Sort rooms numerically (1,2,3...)
       const keys = Object.keys(data).sort((a,b)=>parseInt(a)-parseInt(b));
 
       keys.forEach(roomKey => {
@@ -214,6 +209,7 @@
           const hadTokenBefore = (lastTokenByRoom[roomKey] !== undefined);
           const isChanged = hadTokenBefore && lastTokenByRoom[roomKey] !== token;
 
+          // Save current token
           lastTokenByRoom[roomKey] = token;
 
           const tokenId = `token-${roomKey}`;
@@ -231,11 +227,10 @@
             const el = document.getElementById(tokenId);
             if (!el) return;
 
+            // ✅ Only blink + beep when token actually CHANGES (not on first load)
             if (isChanged) {
-              // 🔊 sound when new token called
               playBeep();
 
-              // blink only the number for 5 seconds
               if (blinkTimeoutByRoom[roomKey]) {
                 clearTimeout(blinkTimeoutByRoom[roomKey]);
                 blinkTimeoutByRoom[roomKey] = null;
@@ -256,13 +251,8 @@
       }
     }
 
-    // Realtime updates
+    // ✅ Real-time updates only (removed setInterval to stop flashing)
     db.ref("rooms").on("value", snap => render(snap.val()));
-
-    // Expiry refresh so old calls disappear
-    setInterval(() => {
-      db.ref("rooms").once("value").then(snap => render(snap.val()));
-    }, 5000);
   </script>
 
 </body>
