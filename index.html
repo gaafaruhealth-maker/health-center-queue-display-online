@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Gaafaru Health Center Queue Display</title>
+
+  <style>
+    body{
+      font-family: Arial, sans-serif;
+      background:#1f5c54;
+      color:#fff;
+      text-align:center;
+      margin:0;
+      padding:20px;
+    }
+    h1{ margin:10px 0 15px; }
+
+    .topbar{
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      gap:12px;
+      margin-bottom:20px;
+      flex-wrap:wrap;
+    }
+    .btn{
+      background:#ffffff;
+      border:none;
+      padding:10px 16px;
+      border-radius:10px;
+      cursor:pointer;
+      font-weight:700;
+    }
+    .status{
+      font-size:14px;
+      opacity:.95;
+    }
+
+    #rooms{
+      display:flex;
+      flex-wrap:wrap;
+      justify-content:center;
+      gap:20px;
+    }
+
+    /* ✅ Room box light green */
+    .room{
+      min-width:280px;
+      padding:25px;
+      border-radius:16px;
+      box-shadow:0 6px 18px rgba(0,0,0,.35);
+      background:#7CFC98;
+      color:#003b1a;
+      animation: fadeIn .35s ease-in-out;
+    }
+
+    .room-number{
+      font-size:28px;
+      margin-bottom:8px;
+      font-weight:900;
+    }
+
+    /* ✅ Doctor name line */
+    .doctor-name{
+      font-size:20px;
+      font-weight:800;
+      margin-bottom:10px;
+      color:#004d26;
+      min-height: 24px; /* keeps layout stable even if empty */
+    }
+
+    .token{
+      font-size:62px;
+      font-weight:900;
+      color:#ffffff;
+      text-shadow:0 2px 6px rgba(0,0,0,.35);
+      line-height: 1;
+    }
+
+    /* ✅ Blink red for new token (only number) */
+    .blink-red{
+      color:#ff0000 !important;
+      animation: blinkRed .6s steps(2,end) infinite;
+    }
+    @keyframes blinkRed{
+      0%{opacity:1;}
+      50%{opacity:0;}
+      100%{opacity:1;}
+    }
+
+    .no-data{
+      font-size:28px;
+      margin-top:60px;
+      opacity:.9;
+      color:#fff;
+    }
+
+    @keyframes fadeIn{
+      from{opacity:0; transform:translateY(8px);}
+      to{opacity:1; transform:translateY(0);}
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1>Gaafaru Health Center Current Queue Status</h1>
+
+  <div class="topbar">
+    <button id="enableSoundBtn" class="btn">🔊 Enable Sound</button>
+    <div id="soundStatus" class="status">Sound: OFF (click Enable Sound once)</div>
+  </div>
+
+  <div id="rooms"></div>
+
+  <!-- Firebase v8 -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+
+  <script>
+    var firebaseConfig = {
+      databaseURL: "https://hinnavaru-queue-default-rtdb.asia-southeast1.firebasedatabase.app"
+    };
+    firebase.initializeApp(firebaseConfig);
+    var db = firebase.database();
+
+    const roomsDiv = document.getElementById("rooms");
+
+    // Hide room if not updated recently
+    const MAX_AGE_SECONDS = 900; // 15 minutes
+
+    // Blink duration
+    const BLINK_MS = 5000;
+
+    // Track token changes
+    const lastTokenByRoom = {};
+    const blinkTimeoutByRoom = {};
+
+    // 🔊 Sound
+    let soundEnabled = false;
+
+    // ✅ Beep-Beep (2 times) using WebAudio
+    function playBeep() {
+      if (!soundEnabled) return;
+
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+        function singleBeep(delay) {
+          setTimeout(() => {
+            const oscillator = ctx.createOscillator();
+            const gain = ctx.createGain();
+
+            oscillator.type = "sine";
+            oscillator.frequency.value = 900; // pitch
+            gain.gain.value = 0.2;            // volume
+
+            oscillator.connect(gain);
+            gain.connect(ctx.destination);
+
+            oscillator.start();
+            setTimeout(() => oscillator.stop(), 180); // beep length
+          }, delay);
+        }
+
+        // 🔊 Beep-Beep
+        singleBeep(0);
+        singleBeep(300);
+
+        setTimeout(() => ctx.close(), 1000);
+      } catch (e) {
+        console.log("Sound error:", e);
+      }
+    }
+
+    // Enable sound (must be user gesture)
+    document.getElementById("enableSoundBtn").addEventListener("click", () => {
+      soundEnabled = true;
+      document.getElementById("soundStatus").textContent = "Sound: ON ✅";
+      playBeep(); // warm up
+    });
+
+    function isFresh(isoTime) {
+      if (!isoTime) return false;
+      const t = Date.parse(isoTime);
+      if (isNaN(t)) return false;
+      const ageSec = (Date.now() - t) / 1000;
+      return ageSec <= MAX_AGE_SECONDS;
+    }
+
+    function render(data) {
+      roomsDiv.innerHTML = "";
+
+      if (!data) {
+        roomsDiv.innerHTML = "<div class='no-data'>No Active Calls</div>";
+        return;
+      }
+
+      let visible = 0;
+      const keys = Object.keys(data).sort((a,b)=>parseInt(a)-parseInt(b));
+
+      keys.forEach(roomKey => {
+        const call = data[roomKey] || {};
+        const room = (call.Room || roomKey).toString().replace(/Room/gi,'').trim();
+        const token = (call.Token ?? "").toString().trim();
+        const doctorRaw = (call.Doctor ?? "").toString().trim();
+        const doctorText = doctorRaw ? ("Dr. " + doctorRaw) : "";
+        const lastUpdated = call.LastUpdatedUtc || call.CalledTimeUtc || "";
+
+        // show only if token exists and still fresh
+        if (token !== "" && token !== "0" && token !== "-" && isFresh(lastUpdated)) {
+          visible++;
+
+          const hadTokenBefore = (lastTokenByRoom[roomKey] !== undefined);
+          const isChanged = hadTokenBefore && lastTokenByRoom[roomKey] !== token;
+
+          lastTokenByRoom[roomKey] = token;
+
+          const tokenId = `token-${roomKey}`;
+
+          roomsDiv.innerHTML += `
+            <div class="room">
+              <div class="room-number">Room ${room}</div>
+              <div class="doctor-name">${doctorText}</div>
+              <div id="${tokenId}" class="token">${token}</div>
+            </div>
+          `;
+
+          // After DOM inserted
+          setTimeout(() => {
+            const el = document.getElementById(tokenId);
+            if (!el) return;
+
+            if (isChanged) {
+              // 🔊 sound when new token called
+              playBeep();
+
+              // blink only the number for 5 seconds
+              if (blinkTimeoutByRoom[roomKey]) {
+                clearTimeout(blinkTimeoutByRoom[roomKey]);
+                blinkTimeoutByRoom[roomKey] = null;
+              }
+
+              el.classList.add("blink-red");
+              blinkTimeoutByRoom[roomKey] = setTimeout(() => {
+                el.classList.remove("blink-red");
+                blinkTimeoutByRoom[roomKey] = null;
+              }, BLINK_MS);
+            }
+          }, 0);
+        }
+      });
+
+      if (visible === 0) {
+        roomsDiv.innerHTML = "<div class='no-data'>No Active Calls</div>";
+      }
+    }
+
+    // Realtime updates
+    db.ref("rooms").on("value", snap => render(snap.val()));
+
+    // Expiry refresh so old calls disappear
+    setInterval(() => {
+      db.ref("rooms").once("value").then(snap => render(snap.val()));
+    }, 5000);
+  </script>
+
+</body>
+</html>
